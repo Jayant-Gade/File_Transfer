@@ -326,11 +326,13 @@ body {
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center; /* Center the radar vertically */
+    justify-content: flex-start;
+    /* Center the radar vertically */
 }
 
 .discovery-tab-layout.files-active {
-    justify-content: flex-start; /* Space it from top for files view */
+    justify-content: flex-start;
+    /* Space it from top for files view */
 }
 
 .discovery-subtabs {
@@ -882,7 +884,7 @@ body {
 }
 
 .transmission-card {
-    border-left: 4px solid rgba(0,255,0,0.1);
+    border-left: 4px solid rgba(0, 255, 0, 0.1);
 }
 
 .card-meta {
@@ -900,10 +902,21 @@ body {
     letter-spacing: 0.5px;
 }
 
-.transmission-card.completed { border-left-color: var(--primary); }
-.transmission-card.transferring { border-left-color: #00e5ff; }
-.transmission-card.pending { border-left-color: #ffeb3b; }
-.transmission-card.failed { border-left-color: #ff5252; }
+.transmission-card.completed {
+    border-left-color: var(--primary);
+}
+
+.transmission-card.transferring {
+    border-left-color: #00e5ff;
+}
+
+.transmission-card.pending {
+    border-left-color: #ffeb3b;
+}
+
+.transmission-card.failed {
+    border-left-color: #ff5252;
+}
 
 /* Progress Mini Ring */
 .card-progress-circle {
@@ -926,14 +939,36 @@ body {
     justify-content: center;
 }
 
-.status-center-icon .p-text { font-size: 0.5rem; font-weight: 800; color: var(--primary); }
-.status-center-icon .ic-ok { font-size: 0.8rem; color: var(--primary); }
-.status-center-icon .ic-err { font-size: 0.8rem; color: #ff5252; }
-.status-center-icon .ic-spin { font-size: 0.7rem; color: #ffeb3b; animation: fa-spin 2s infinite linear; }
+.status-center-icon .p-text {
+    font-size: 0.5rem;
+    font-weight: 800;
+    color: var(--primary);
+}
+
+.status-center-icon .ic-ok {
+    font-size: 0.8rem;
+    color: var(--primary);
+}
+
+.status-center-icon .ic-err {
+    font-size: 0.8rem;
+    color: #ff5252;
+}
+
+.status-center-icon .ic-spin {
+    font-size: 0.7rem;
+    color: #ffeb3b;
+    animation: fa-spin 2s infinite linear;
+}
 
 @keyframes fa-spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
+    from {
+        transform: rotate(0deg);
+    }
+
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 .transfer-status-tag {
@@ -942,13 +977,28 @@ body {
     padding: 3px 6px;
     border-radius: 3px;
     letter-spacing: 1.5px;
-    background: rgba(255,255,255,0.05);
+    background: rgba(255, 255, 255, 0.05);
 }
 
-.transfer-status-tag.completed { color: var(--primary); background: rgba(0,255,0,0.1); }
-.transfer-status-tag.transferring { color: #00e5ff; background: rgba(0,229,255,0.1); }
-.transfer-status-tag.pending { color: #ffeb3b; background: rgba(255,235,59,0.1); }
-.transfer-status-tag.failed { color: #ff5252; background: rgba(255,82,82,0.1); }
+.transfer-status-tag.completed {
+    color: var(--primary);
+    background: rgba(0, 255, 0, 0.1);
+}
+
+.transfer-status-tag.transferring {
+    color: #00e5ff;
+    background: rgba(0, 229, 255, 0.1);
+}
+
+.transfer-status-tag.pending {
+    color: #ffeb3b;
+    background: rgba(255, 235, 59, 0.1);
+}
+
+.transfer-status-tag.failed {
+    color: #ff5252;
+    background: rgba(255, 82, 82, 0.1);
+}
 
 /* Requests Tab Content */
 .requests-view-content {
@@ -1099,4 +1149,90 @@ footer {
     display: flex;
     align-items: center;
     gap: 10px;
+}
+
+.central-vault-node {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -150px);
+    width: 60px;
+    height: 60px;
+    background: rgba(0, 255, 0, 0.05);
+    border: 1px solid var(--primary);
+    border-radius: 50%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: var(--primary);
+    font-size: 1.5rem;
+    box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);
+    z-index: 10;
+    pointer-events: none;
+    animation: vaultDrift 4s infinite ease-in-out;
+}
+
+@keyframes vaultDrift {
+    0%, 100% { transform: translate(-50%, -150px); }
+    50% { transform: translate(-50%, -160px); }
+}
+
+.vault-count {
+    font-size: 0.6rem;
+    font-weight: 900;
+    margin-top: 2px;
+}
+
+.peer-action-dialog.extended {
+    width: 480px;
+    background: rgba(10, 20, 30, 0.98);
+}
+
+.action-grid-columns {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 15px;
+    margin-bottom: 25px;
+}
+
+.action-grid-columns .col {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.action-grid-columns label {
+    font-size: 0.5rem;
+    color: var(--text-muted);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+}
+
+.vault-select {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(0, 255, 0, 0.2);
+    color: white;
+    font-size: 0.6rem;
+    padding: 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.vault-select:focus {
+    border-color: var(--primary);
+    outline: none;
+}
+
+.dialog-footer-actions {
+    display: flex;
+    gap: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    padding-top: 15px;
+}
+
+.dialog-footer-actions .btn-fav-toggle,
+.dialog-footer-actions .btn-close-dialog {
+    flex: 1;
 }

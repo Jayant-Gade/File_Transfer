@@ -190,7 +190,7 @@ app.post('/receive-request', (req, res) => {
             progress: 0,
             status: 'transferring',
             peer: senderId,
-            type: 'sent', // We are sending it to them
+            type: 'received', // This node is receiving it from the sender
             timestamp: new Date().toISOString().replace('T', ' ').split('.')[0]
         });
 
@@ -224,9 +224,9 @@ app.post('/favorites/toggle', (req, res) => {
     }
 });
 
-// 3. Get incoming requests
+// 3. Get incoming requests (Including pending and newly accepted for auto-download)
 app.get('/requests', (req, res) => {
-    res.json(Array.from(incomingRequests.values()).filter(r => r.status === 'pending'));
+    res.json(Array.from(incomingRequests.values()).filter(r => r.status === 'pending' || r.status === 'accepted'));
 });
 
 // 4. Accept/Decline request
@@ -246,7 +246,7 @@ app.post('/requests/:id/action', (req, res) => {
             progress: 0,
             status: 'transferring',
             peer: request.senderId,
-            type: 'sent', // We accepted their request to SEND it to them
+            type: 'received', // This node has approved a retrieval
             timestamp: new Date().toISOString().replace('T', ' ').split('.')[0]
         });
 

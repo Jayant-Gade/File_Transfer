@@ -39,6 +39,7 @@ function App() {
   const [activeTab, setActiveTab] = useState('discovery'); // 'discovery', 'transfers', 'requests', 'publish'
   const [activePeerMenu, setActivePeerMenu] = useState(null); 
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [droppedFiles, setDroppedFiles] = useState([]); // Storage for drag-dropped files (tactical vault)
 
   // --- Fetch Logic ---
 
@@ -67,6 +68,27 @@ function App() {
     return () => clearInterval(interval);
   }, [fetchAll]);
 
+  // --- AUTO_RECEIVE HANDLER (Favorite Peers) ---
+  const [downloadedRequestIds, setDownloadedRequestIds] = useState(new Set());
+  useEffect(() => {
+     incomingRequests.forEach(req => {
+         if (req.status === 'accepted' && !downloadedRequestIds.has(req.id)) {
+             console.log(`Auto-Initializing Retrieval for Request ${req.id}`);
+             // Trigger download
+             const fileData = {
+                 id: req.fileId,
+                 name: req.fileName,
+                 size: req.size,
+                 ownerIp: req.senderIp,
+                 ownerPort: req.senderPort,
+                 ownerId: req.senderId
+             };
+             handleDownload(fileData);
+             setDownloadedRequestIds(prev => new Set(prev).add(req.id));
+         }
+     });
+  }, [incomingRequests, downloadedRequestIds]);
+
   // --- Actions ---
 
   const handleFileUpload = async (e) => {
@@ -90,34 +112,52 @@ function App() {
     }
   };
 
-  const sendFileToPeer = async (peer) => {
-    if (!selectedFile) {
-        alert("Please select a file first via the Profile Menu or Drag & Drop");
-        return;
-    }
-    setUploadStatus(`Initializing transfer to ${peer.id}...`);
+  const sendFileToPeer = async (peer, fileItem, isAlreadyHosted = false) => {
+    if (!fileItem) return;
+    setUploadStatus(`Initializing transfer of ${fileItem.name} to ${peer.id}...`);
     setActivePeerMenu(null);
 
     try {
-      const formData = new FormData();
-      formData.append('file', selectedFile);
-      const { data: hostData } = await axios.post(`${API_BASE}/host`, formData);
+      let fileId = fileItem.id;
+      if (!isAlreadyHosted) {
+          // Host it first
+          const formData = new FormData();
+          formData.append('file', fileItem);
+          const { data } = await axios.post(`${API_BASE}/host`, formData);
+          fileId = data.fileId;
+      }
       
-      const peerApiUrl = `http://${peer.ip}:${peer.port}/receive-request`;
-      await axios.post(peerApiUrl, {
+      const formattedIp = peer.ip.includes(':') ? `[${peer.ip}]` : peer.ip;
+      const peerApiUrl = `http://${formattedIp}:${peer.port}/receive-request`;
+      
+      const { data: receiveRes } = await axios.post(peerApiUrl, {
         senderId: myInfo.id,
-        senderIp: myInfo.ip,
+        senderIp: myInfo.ip || '127.0.0.1',
         senderPort: myInfo.port,
-        fileId: hostData.fileId,
-        fileName: selectedFile.name,
-        size: selectedFile.size
+        fileId: fileId,
+        fileName: fileItem.name,
+        size: fileItem.size
       });
 
-      setUploadStatus(`Request sent to ${peer.id}!`);
-      setSelectedFile(null);
+      if (receiveRes.status === 'accepted') {
+          setUploadStatus(`AUTO_ACCEPTED by ${peer.id}! Stream initialized.`);
+      } else {
+          setUploadStatus(`Request sent to ${peer.id}! Awaiting approval...`);
+      }
+      fetchAll();
       setTimeout(() => setUploadStatus(''), 4000);
     } catch (err) {
       setUploadStatus(`Transfer failed: ${err.message}`);
+    }
+  };
+
+  const handleRadarDrop = (e) => {
+    e.preventDefault();
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length > 0) {
+        setDroppedFiles(prev => [...prev, ...files]);
+        setUploadStatus(`${files.length} FILES_STORE_IN_CENTRAL_VAULT`);
+        setTimeout(() => setUploadStatus(''), 3000);
     }
   };
 
@@ -130,10 +170,7 @@ function App() {
 
   const handleRequestAction = async (requestId, action) => {
     try {
-      const { data } = await axios.post(`${API_BASE}/requests/${requestId}/action`, { action });
-      if (action === 'accept' && data.downloadUrl) {
-        window.open(data.downloadUrl, '_blank');
-      }
+      await axios.post(`${API_BASE}/requests/${requestId}/action`, { action });
       fetchAll();
     } catch (err) { console.error(err); }
   };
@@ -308,11 +345,20 @@ function App() {
                 </div>
 
                 {discoveryView === 'devices' ? (
-                    <div className="radar-circle-container">
+                    <div className="radar-circle-container" onDragOver={(e) => e.preventDefault()} onDrop={handleRadarDrop}>
                         <div className="radar-outer-ring"></div>
                         <div className="radar-inner-ring"></div>
                         <div className="radar-crosshair-h"></div>
                         <div className="radar-crosshair-v"></div>
+                        
+                        {/* DATA VAULT ICON - Center */}
+                        {droppedFiles.length > 0 && (
+                            <div className="central-vault-node" title={`${droppedFiles.length} FILES_QUEUED`}>
+                                <FaFolderOpen />
+                                <span className="vault-count">{droppedFiles.length}</span>
+                            </div>
+                        )}
+
                         <div className="central-status-display">
                             <span className="scan-text">SCANNING_PROTOCOL_v1.1</span>
                             {uploadStatus && <div className="live-status-toast">{uploadStatus}</div>}
@@ -329,15 +375,54 @@ function App() {
                                 </motion.div>
                                 <AnimatePresence>
                                     {activePeerMenu === peer.id && (
-                                        <motion.div initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} className="peer-action-dialog">
-                                            <div className="dialog-header"><strong>{peer.id.toUpperCase()}</strong><span>{peer.ip}</span></div>
+                                        <motion.div initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} className="peer-action-dialog extended">
+                                            <div className="dialog-header"><strong>PEER_{peer.id.toUpperCase()}</strong><span>📡 {peer.ip}</span></div>
                                             <div className="dialog-body">
-                                                <button className="btn-direct-send" onClick={() => sendFileToPeer(peer)}><FaPaperPlane /> SEND_DIRECT</button>
-                                                <button className={`btn-fav-toggle ${favorites.includes(peer.id) ? 'active' : ''}`} onClick={() => toggleFavorite(peer.id)}>
-                                                    {favorites.includes(peer.id) ? <FaHeart /> : <FaRegHeart />} STAR_FAV
-                                                </button>
+                                                <div className="action-grid-columns">
+                                                    <div className="col">
+                                                        <label>INITIALIZE_NEW</label>
+                                                        <button className="btn-direct-send" onClick={() => {
+                                                            const input = document.createElement('input');
+                                                            input.type = 'file';
+                                                            input.onchange = (e) => sendFileToPeer(peer, e.target.files[0], false);
+                                                            input.click();
+                                                        }}><FaPaperPlane /> NEW_STREAM</button>
+                                                    </div>
+                                                    
+                                                    {hostedFiles.length > 0 && (
+                                                    <div className="col">
+                                                        <label>SYNC_EXISTING</label>
+                                                        <select className="vault-select" onChange={(e) => {
+                                                            const f = hostedFiles.find(xf => xf.id === e.target.value);
+                                                            if(f) sendFileToPeer(peer, f, true);
+                                                        }}>
+                                                            <option>SELECT_PUBLISH...</option>
+                                                            {hostedFiles.map(f => <option key={f.id} value={f.id}>{f.name.substring(0,10)}...</option>)}
+                                                        </select>
+                                                    </div>
+                                                    )}
+
+                                                    {droppedFiles.length > 0 && (
+                                                    <div className="col">
+                                                        <label>DATA_VAULT</label>
+                                                        <select className="vault-select" onChange={(e) => {
+                                                            const f = droppedFiles[parseInt(e.target.value)];
+                                                            if(f) sendFileToPeer(peer, f, false);
+                                                        }}>
+                                                            <option>SELECT_VAULT...</option>
+                                                            {droppedFiles.map((f, i) => <option key={i} value={i}>{f.name.substring(0,10)}...</option>)}
+                                                        </select>
+                                                    </div>
+                                                    )}
+                                                </div>
+                                                
+                                                <div className="dialog-footer-actions">
+                                                    <button className={`btn-fav-toggle ${favorites.includes(peer.id) ? 'active' : ''}`} onClick={() => toggleFavorite(peer.id)}>
+                                                        {favorites.includes(peer.id) ? <FaHeart /> : <FaRegHeart />} STAR_FAV
+                                                    </button>
+                                                    <button className="btn-close-dialog" onClick={() => setActivePeerMenu(null)}>ABORT</button>
+                                                </div>
                                             </div>
-                                            <button className="btn-close-dialog" onClick={() => setActivePeerMenu(null)}>CLOSE</button>
                                         </motion.div>
                                     )}
                                 </AnimatePresence>
