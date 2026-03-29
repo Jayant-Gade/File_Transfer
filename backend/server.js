@@ -140,25 +140,40 @@ updateAnnouncement();
 const browser = bonjour.find({ type: SERVICE_TYPE });
 
 browser.on('up', (service) => {
-    if (service.txt && service.txt.id === MY_ID) return; // Skip self
-
-    console.log(`Discovered Peer: ${service.name} at ${service.addresses[0]}:${service.port}`);
+    // Basic service validation
+    if (!service.txt || !service.txt.id) {
+        console.log(`Discovered service missing metadata: ${service.name}`);
+        return;
+    }
     
-    const peerFiles = service.txt && service.txt.files ? JSON.parse(service.txt.files) : [];
+    if (service.txt.id === MY_ID) return; // Skip self
+
+    const peerAddr = service.addresses && service.addresses.length > 0 ? service.addresses[0] : 'unknown';
+    console.log(`Successfully Discovered Peer: ${service.name} (${service.txt.id}) at ${peerAddr}:${service.port}`);
+    
+    let peerFiles = [];
+    try {
+        peerFiles = service.txt.files ? JSON.parse(service.txt.files) : [];
+    } catch (e) {
+        console.warn(`Failed to parse file list for peer ${service.txt.id}`);
+    }
     
     peers.set(service.txt.id, {
         id: service.txt.id,
         name: service.name,
-        ip: service.addresses[0],
+        ip: peerAddr,
         port: service.port,
         files: peerFiles
     });
+    
+    console.log(`Updated peer list. Total online peers: ${peers.size}`);
 });
 
 browser.on('down', (service) => {
-    if (service.txt && service.txt.id) {
-        console.log(`Peer Went Offline: ${service.txt.id}`);
-        peers.delete(service.txt.id);
+    const peerId = service.txt ? service.txt.id : null;
+    if (peerId && peerId !== MY_ID) {
+        console.log(`Peer Went Offline: ${peerId}`);
+        peers.delete(peerId);
     }
 });
 
