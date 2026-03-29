@@ -27,6 +27,8 @@ const favorites = new Set(); // Peer IDs
 
 // Persistent History for the current session
 const HISTORY_FILE = path.join(__dirname, 'transfers_log.json');
+let transfers = []; // Added back the missing declaration
+
 function saveHistory() {
     try { fs.writeFileSync(HISTORY_FILE, JSON.stringify(transfers, null, 2)); }
     catch (e) { console.error('History save error:', e); }
