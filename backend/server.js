@@ -172,14 +172,24 @@ app.post('/host', upload.single('file'), (req, res) => {
 
 // 2. Receive a transfer request (from a sender)
 app.post('/receive-request', (req, res) => {
-    const { senderId, senderIp, senderPort, fileId, fileName, size } = req.body;
+    // Determine the sender's real source IP from the request metadata—this is more reliable than the payload guess
+    const sourceIp = req.ip.includes('::ffff:') ? req.ip.split('::ffff:')[1] : req.ip;
+    const { senderId, senderIp: payloadIp, senderPort, fileId, fileName, size } = req.body;
+    const resolvedIp = (sourceIp === '::1' || sourceIp === '127.0.0.1') ? payloadIp : sourceIp;
     
     // Check if sender is in favorites for auto-accept
     if (favorites.has(senderId)) {
         const requestId = uuidv4().split('-')[0];
         incomingRequests.set(requestId, {
-            id: requestId, senderId, senderIp, senderPort, 
-            fileId, fileName, size, status: 'accepted', timestamp: Date.now()
+            id: requestId, 
+            senderId, 
+            senderIp: resolvedIp, 
+            senderPort, 
+            fileId, 
+            fileName, 
+            size, 
+            status: 'accepted', 
+            timestamp: Date.now()
         });
         
         // Log Transfer History (Auto-Accepted)
@@ -195,13 +205,25 @@ app.post('/receive-request', (req, res) => {
         });
 
         console.log(`Auto-Accepted Transfer from Favorite Peer: ${senderId}`);
-        return res.json({ message: 'Auto-Accepted', status: 'accepted', downloadUrl: `http://${senderIp}:${senderPort}/download/${fileId}` });
+        const formattedIp = resolvedIp.includes(':') ? `[${resolvedIp}]` : resolvedIp;
+        return res.json({ 
+            message: 'Auto-Accepted', 
+            status: 'accepted', 
+            downloadUrl: `http://${formattedIp}:${senderPort}/download/${fileId}` 
+        });
     }
 
     const requestId = uuidv4().split('-')[0];
     incomingRequests.set(requestId, {
-        id: requestId, senderId, senderIp, senderPort, 
-        fileId, fileName, size, status: 'pending', timestamp: Date.now()
+        id: requestId, 
+        senderId, 
+        senderIp: resolvedIp, 
+        senderPort, 
+        fileId, 
+        fileName, 
+        size, 
+        status: 'pending', 
+        timestamp: Date.now()
     });
 
     console.log(`Direct Transfer Request Received from ${senderId} for ${fileName}`);
@@ -238,20 +260,19 @@ app.post('/requests/:id/action', (req, res) => {
     if (action === 'accept') {
         request.status = 'accepted';
         
-        // Log Transfer History (Manual Accept)
-        transfers.push({
-            id: uuidv4().split('-')[0],
-            name: request.fileName,
-            size: (request.size / 1024 / 1024).toFixed(2) + ' MB',
-            progress: 0,
-            status: 'transferring',
-            peer: request.senderId,
-            type: 'received', // This node has approved a retrieval
-            timestamp: new Date().toISOString().replace('T', ' ').split('.')[0]
+        // No direct push to transfers here on the receiver server—the frontend will call handleDownload
+        res.json({ 
+            status: 'accepted', 
+            downloadUrl: `http://${request.senderIp}:${request.senderPort}/download/${request.fileId}`,
+            fileInfo: {
+                id: request.fileId,
+                name: request.fileName,
+                size: request.size,
+                ownerIp: request.senderIp,
+                ownerPort: request.senderPort,
+                ownerId: request.senderId
+            }
         });
-
-        // In this simple version, the client will just trigger a download from the sender
-        res.json({ message: 'Accepted', downloadUrl: `http://${request.senderIp}:${request.senderPort}/download/${request.fileId}` });
     } else {
         request.status = 'declined';
         

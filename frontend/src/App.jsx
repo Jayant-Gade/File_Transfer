@@ -170,7 +170,10 @@ function App() {
 
   const handleRequestAction = async (requestId, action) => {
     try {
-      await axios.post(`${API_BASE}/requests/${requestId}/action`, { action });
+      const { data } = await axios.post(`${API_BASE}/requests/${requestId}/action`, { action });
+      if (action === 'accept' && data.fileInfo) {
+          handleDownload(data.fileInfo);
+      }
       fetchAll();
     } catch (err) { console.error(err); }
   };
@@ -197,10 +200,12 @@ function App() {
   };
 
   const handleDownload = async (file) => {
-    const downloadUrl = `http://${file.ownerIp}:${file.ownerPort}/download/${file.id}`;
+    // Ensure IPv6 addresses are wrapped in square brackets
+    const formattedIp = file.ownerIp.includes(':') ? `[${file.ownerIp}]` : file.ownerIp;
+    const downloadUrl = `http://${formattedIp}:${file.ownerPort}/download/${file.id}`;
     window.open(downloadUrl, '_blank');
     
-    // Log receipt to our own server
+    // Log receipt to our own server as a 'received' transaction
     try {
         await axios.post(`${API_BASE}/transfers/log`, {
             name: file.name,
