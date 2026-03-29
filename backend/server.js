@@ -44,25 +44,60 @@ udpSocket.on('listening', () => {
 
 let peers = new Map(); // PeerID -> { id, ip, port, lastSeen }
 
-udpSocket.on('message', (msg, rinfo) => {
+udpSocket.on('message', async (msg, rinfo) => {
     try {
         const data = JSON.parse(msg.toString());
         if (data.id === MY_ID) return; // Skip self
         
+        // Use merging to preserve metadata
+        const existing = peers.get(data.id) || {};
+        const ipToUse = rinfo.address || data.ip; // Prioritize real IP seen by socket
+
         peers.set(data.id, {
+            ...existing,
             ...data,
+            ip: ipToUse,
             lastSeen: Date.now()
         });
-    } catch (e) { /* Ignore non-JSON or malformed packets */ }
+
+        // Trigger an immediate proactive scan for their files if we haven't seen them yet
+        if (!existing.files || existing.files.length === 0) {
+            probePeerFiles(data.id, ipToUse, data.port);
+        }
+    } catch (e) { /* Ignore malformed heartbeats */ }
 });
 
 udpSocket.bind(DISCOVERY_PORT);
+
+// --- PROACTIVE SCANNER ENGINE ---
+
+async function probePeerFiles(peerId, peerIp, peerPort) {
+    try {
+        const formattedIp = peerIp.includes(':') ? `[${peerIp}]` : peerIp;
+        const res = await axios.get(`http://${formattedIp}:${peerPort}/hosted`, { timeout: 3000 });
+        const existing = peers.get(peerId);
+        if (existing) {
+            peers.set(peerId, {
+                ...existing,
+                files: res.data.map(f => ({ ...f, ownerId: peerId, ownerIp: peerIp, ownerPort: peerPort }))
+            });
+            console.log(`Successfully indexed ${res.data.length} files from ${peerId}`);
+        }
+    } catch (e) { /* silent fail for unreachable nodes */ }
+}
+
+// Global Re-Scan every 20 seconds to keep files updated
+setInterval(() => {
+    for (const [id, peer] of peers.entries()) {
+        probePeerFiles(id, peer.ip, peer.port);
+    }
+}, 20000);
 
 // Auto-expire peers after 10 seconds of silence
 setInterval(() => {
     const now = Date.now();
     for (const [id, peer] of peers.entries()) {
-        if (now - peer.lastSeen > 10000) {
+        if (now - peer.lastSeen > 12000) {
             peers.delete(id);
             console.log(`Node Expired: ${id}`);
         }
@@ -85,20 +120,7 @@ function saveHistory() {
     catch (e) { console.error('History save error:', e); }
 }
 
-// Simulation loop: update progress for active transfers every 2 seconds
-setInterval(() => {
-    let changed = false;
-    transfers = transfers.map(t => {
-        if (t.status === 'transferring') {
-            const next = t.progress + Math.floor(Math.random() * 15) + 5;
-            changed = true;
-            if (next >= 100) return { ...t, progress: 100, status: 'completed' };
-            return { ...t, progress: next };
-        }
-        return t;
-    });
-    if (changed) saveHistory();
-}, 2000);
+// End of persistence logic
 
 // Middleware
 app.use(cors());
@@ -167,7 +189,9 @@ app.post('/receive-request', (req, res) => {
             size: (size / 1024 / 1024).toFixed(2) + ' MB',
             progress: 0,
             status: 'transferring',
-            peer: senderId
+            peer: senderId,
+            type: 'sent', // We are sending it to them
+            timestamp: new Date().toISOString().replace('T', ' ').split('.')[0]
         });
 
         console.log(`Auto-Accepted Transfer from Favorite Peer: ${senderId}`);
@@ -221,7 +245,9 @@ app.post('/requests/:id/action', (req, res) => {
             size: (request.size / 1024 / 1024).toFixed(2) + ' MB',
             progress: 0,
             status: 'transferring',
-            peer: request.senderId
+            peer: request.senderId,
+            type: 'sent', // We accepted their request to SEND it to them
+            timestamp: new Date().toISOString().replace('T', ' ').split('.')[0]
         });
 
         // In this simple version, the client will just trigger a download from the sender
@@ -236,7 +262,9 @@ app.post('/requests/:id/action', (req, res) => {
             size: (request.size / 1024 / 1024).toFixed(2) + ' MB',
             progress: 0,
             status: 'failed',
-            peer: request.senderId
+            peer: request.senderId,
+            type: 'sent',
+            timestamp: new Date().toISOString().replace('T', ' ').split('.')[0]
         });
 
         res.json({ message: 'Declined' });
@@ -246,6 +274,24 @@ app.post('/requests/:id/action', (req, res) => {
 // 5. Get Transfer History
 app.get('/transfers', (req, res) => {
     res.json(transfers);
+});
+
+// 5b. Manually Log a Transfer (for when THIS node downloads from another)
+app.post('/transfers/log', (req, res) => {
+    const { name, size, peer, status, type } = req.body;
+    const newTransfer = {
+        id: uuidv4().split('-')[0],
+        name,
+        size,
+        peer,
+        status: status || 'completed', 
+        progress: status === 'completed' ? 100 : 0,
+        type: type || 'received',
+        timestamp: new Date().toISOString().replace('T', ' ').split('.')[0]
+    };
+    transfers.push(newTransfer);
+    saveHistory();
+    res.json(newTransfer);
 });
 
 // 5. List locally hosted files
@@ -260,25 +306,60 @@ app.get('/download/:id', (req, res) => {
 
     const filePath = fileInfo.path;
     const stat = fs.statSync(filePath);
+    const totalSize = stat.size;
+    let bytesSent = 0;
 
-    // Log the transfer start (Direct download)
-    transfers.push({
-        id: uuidv4().split('-')[0],
+    const transferId = uuidv4().split('-')[0];
+    const transferRecord = {
+        id: transferId,
         name: fileInfo.name,
-        size: (fileInfo.size / 1024 / 1024).toFixed(2) + ' MB',
+        size: (totalSize / 1024 / 1024).toFixed(2) + ' MB',
         progress: 0,
         status: 'transferring',
-        peer: req.ip || 'REMOTE_PEER' 
-    });
+        peer: req.ip || 'REMOTE_PEER',
+        type: 'sent', // We are sending it to them
+        timestamp: new Date().toISOString().replace('T', ' ').split('.')[0]
+    };
+    
+    transfers.push(transferRecord);
     saveHistory();
 
     res.writeHead(200, {
         'Content-Type': fileInfo.type || 'application/octet-stream',
-        'Content-Length': stat.size,
+        'Content-Length': totalSize,
         'Content-Disposition': `attachment; filename="${fileInfo.name}"`
     });
 
     const readStream = fs.createReadStream(filePath);
+    
+    readStream.on('data', (chunk) => {
+        bytesSent += chunk.length;
+        const currentProgress = Math.floor((bytesSent / totalSize) * 100);
+        
+        // Update history in-memory for the /transfers endpoint
+        const idx = transfers.findIndex(t => t.id === transferId);
+        if (idx !== -1 && transfers[idx].progress !== currentProgress) {
+            transfers[idx].progress = currentProgress;
+        }
+    });
+
+    readStream.on('end', () => {
+        const idx = transfers.findIndex(t => t.id === transferId);
+        if (idx !== -1) {
+            transfers[idx].progress = 100;
+            transfers[idx].status = 'completed';
+            saveHistory();
+        }
+    });
+
+    readStream.on('error', () => {
+        const idx = transfers.findIndex(t => t.id === transferId);
+        if (idx !== -1) {
+            transfers[idx].status = 'failed';
+            saveHistory();
+        }
+    });
+
     readStream.pipe(res);
 });
 
@@ -303,12 +384,15 @@ app.post('/peers/manual', async (req, res) => {
         const statusRes = await axios.get(`http://${peerIp}:${peerPort}/status`, { timeout: 3000 });
         const hostedRes = await axios.get(`http://${peerIp}:${peerPort}/hosted`, { timeout: 3000 });
         
+        const existing = peers.get(statusRes.data.id) || {};
         const peerInfo = {
+            ...existing,
             id: statusRes.data.id,
             name: `Manual-${statusRes.data.id}`,
             ip: peerIp,
             port: peerPort || 3000,
-            files: hostedRes.data.map(f => ({ id: f.id, name: f.name, size: f.size }))
+            files: hostedRes.data.map(f => ({ id: f.id, name: f.name, size: f.size })),
+            lastSeen: Date.now()
         };
         
         peers.set(peerInfo.id, peerInfo);
@@ -370,12 +454,15 @@ browser.on('up', (service) => {
         console.warn(`Failed to parse file list for peer ${service.txt.id}`);
     }
     
+    const existing = peers.get(service.txt.id) || {};
     peers.set(service.txt.id, {
+        ...existing,
         id: service.txt.id,
         name: service.name,
         ip: peerAddr,
         port: service.port,
-        files: peerFiles
+        files: peerFiles,
+        lastSeen: Date.now()
     });
     
     console.log(`Updated peer list. Total online peers: ${peers.size}`);

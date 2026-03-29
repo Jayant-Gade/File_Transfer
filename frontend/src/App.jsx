@@ -138,6 +138,44 @@ function App() {
     } catch (err) { console.error(err); }
   };
 
+  const handleRefresh = () => {
+    setUploadStatus("RE_SCANNING_NETWORK...");
+    fetchAll();
+    // If we are in files view, also trigger the peer file probe immediately
+    if (discoveryView === 'files') {
+        const fetchPeerFiles = async () => {
+            const allFiles = [];
+            for (const peer of peers) {
+                try {
+                    const formattedIp = peer.ip.includes(':') ? `[${peer.ip}]` : peer.ip;
+                    const { data } = await axios.get(`http://${formattedIp}:${peer.port}/hosted`, { timeout: 2000 });
+                    allFiles.push(...data.map(f => ({ ...f, ownerId: peer.id, ownerIp: peer.ip, ownerPort: peer.port })));
+                } catch (e) { /* silent fail */ }
+            }
+            setNearbyFiles(allFiles);
+        };
+        fetchPeerFiles();
+    }
+    setTimeout(() => setUploadStatus(""), 2000);
+  };
+
+  const handleDownload = async (file) => {
+    const downloadUrl = `http://${file.ownerIp}:${file.ownerPort}/download/${file.id}`;
+    window.open(downloadUrl, '_blank');
+    
+    // Log receipt to our own server
+    try {
+        await axios.post(`${API_BASE}/transfers/log`, {
+            name: file.name,
+            size: (file.size / 1024 / 1024).toFixed(2) + ' MB',
+            peer: file.ownerId,
+            status: 'completed',
+            type: 'received'
+        });
+        fetchAll();
+    } catch (e) { console.error("Logging failed", e); }
+  };
+
   const handleManualSync = async (addr) => {
     if (!addr) return;
     const parts = addr.split(':');
@@ -166,23 +204,32 @@ function App() {
 
   const [discoveryView, setDiscoveryView] = useState('devices'); // 'devices', 'files'
   const [nearbyFiles, setNearbyFiles] = useState([]); // Aggregated files from peers
+  const [showOwnInNetwork, setShowOwnInNetwork] = useState(false); // Toggle to see own files in Network view
+  const [transmissionView, setTransmissionView] = useState('received'); // 'sent', 'received'
 
-  // --- Aggregation logic for nearby files ---
+  // --- Aggregation logic for nearby files (Server-Side Cached + Self) ---
   useEffect(() => {
     if (activeTab === 'discovery' && discoveryView === 'files') {
-        const fetchPeerFiles = async () => {
-            const allFiles = [];
-            for (const peer of peers) {
-                try {
-                    const { data } = await axios.get(`http://${peer.ip}:${peer.port}/hosted`);
-                    allFiles.push(...data.map(f => ({ ...f, ownerId: peer.id, ownerIp: peer.ip, ownerPort: peer.port })));
-                } catch (e) { console.error(`Failed to fetch from ${peer.id}`); }
-            }
-            setNearbyFiles(allFiles);
-        };
-        fetchPeerFiles();
+        const externalFiles = peers.flatMap(p => (p.files || []).map(f => ({
+            ...f,
+            ownerId: p.id,
+            ownerIp: p.ip,
+            ownerPort: p.port
+        })));
+        
+        const ownFiles = showOwnInNetwork ? hostedFiles.map(f => ({
+            ...f,
+            ownerId: 'LOCAL_NODE',
+            ownerIp: '127.0.0.1',
+            ownerPort: myInfo.port,
+            isLocal: true
+        })) : [];
+
+        setNearbyFiles([...ownFiles, ...externalFiles]);
+    } else {
+        setNearbyFiles([]);
     }
-  }, [peers, activeTab, discoveryView]);
+  }, [peers, hostedFiles, activeTab, discoveryView, showOwnInNetwork, myInfo.port]);
 
   // (Structural alignment)
 
@@ -249,6 +296,15 @@ function App() {
                 <div className="discovery-subtabs">
                     <button className={discoveryView === 'devices' ? 'active' : ''} onClick={() => setDiscoveryView('devices')}>DEVICES</button>
                     <button className={discoveryView === 'files' ? 'active' : ''} onClick={() => setDiscoveryView('files')}>NEARBY_FILES</button>
+                    <div className="tab-separator"></div>
+                    <button className="btn-refresh-scan" onClick={handleRefresh} title="Manual Network Rescan">
+                        <FaSyncAlt /> REFRESH_GRID
+                    </button>
+                    <div className="tab-separator"></div>
+                    <label className="self-toggle">
+                        <input type="checkbox" checked={showOwnInNetwork} onChange={(e) => setShowOwnInNetwork(e.target.checked)} />
+                        <span>SHOW_OWN_PUBLISHES</span>
+                    </label>
                 </div>
 
                 {discoveryView === 'devices' ? (
@@ -300,7 +356,7 @@ function App() {
                                         <strong>{f.name}</strong>
                                         <span>FROM: {f.ownerId.toUpperCase()}</span>
                                     </div>
-                                    <button className="btn-download-quick" onClick={() => window.open(`http://${f.ownerIp}:${f.ownerPort}/download/${f.id}`, '_blank')}>
+                                    <button className="btn-download-quick" onClick={() => handleDownload(f)}>
                                         <FaDownload />
                                     </button>
                                 </div>
@@ -338,11 +394,19 @@ function App() {
 
           {activeTab === 'transfers' && (
             <div className="transfer-view-content stretch">
-                <div className="publish-header-compact"><h3>ACTIVE_TRANSMISSIONS</h3></div>
+                <div className="discovery-subtabs">
+                    <button className={transmissionView === 'received' ? 'active' : ''} onClick={() => setTransmissionView('received')}>RECEIVED</button>
+                    <button className={transmissionView === 'sent' ? 'active' : ''} onClick={() => setTransmissionView('sent')}>SENT</button>
+                    <div className="tab-separator"></div>
+                    <button className="btn-refresh-scan" onClick={fetchAll} title="Manual History Refresh">
+                        <FaSyncAlt /> SYNC_LEDGER
+                    </button>
+                </div>
+                
                 <div className="hosted-files-grid">
-                    {transfers.length === 0 ? (
-                         <div className="empty-box">NO_DATA_FLOWING</div>
-                    ) : transfers.map(t => (
+                    {transfers.filter(t => t.type === transmissionView).length === 0 ? (
+                         <div className="empty-box">NO_{transmissionView.toUpperCase()}_DATA_FLOWING</div>
+                    ) : transfers.filter(t => t.type === transmissionView).map(t => (
                         <div key={t.id} className={`hosted-card transmission-card ${t.status}`}>
                             <div className="card-progress-circle">
                                 <svg width="40" height="40">
@@ -359,7 +423,10 @@ function App() {
                             </div>
                             <div className="card-info">
                                 <strong>{t.name}</strong>
-                                <span>PEER: {t.peer} | {t.size}</span>
+                                <div className="card-meta">
+                                    <span>{t.type === 'sent' ? 'TO' : 'FROM'}: {t.peer} | {t.size}</span>
+                                    <span className="timestamp-badge">{t.timestamp}</span>
+                                </div>
                             </div>
                             <div className={`transfer-status-tag ${t.status}`}>{t.status.toUpperCase()}</div>
                         </div>
