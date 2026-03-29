@@ -407,39 +407,48 @@ body {
 }
 
 /* Central Status Display */
-.central-status-display {
+.manual-sync-bar {
+    margin-top: 1rem;
+    background: rgba(0, 255, 0, 0.05);
+    padding: 6px;
+    border-radius: 8px;
+    border: 1px solid rgba(0, 255, 0, 0.1);
     display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.5rem;
-    z-index: 5;
-    text-align: center;
+    gap: 8px;
+    backdrop-filter: blur(5px);
 }
 
-.scan-text {
-    font-size: 0.9rem;
+.manual-sync-bar input {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(0, 255, 0, 0.1);
     color: var(--primary);
-    letter-spacing: 4px;
-    font-weight: 800;
-    animation: text-pulse 2s infinite ease-in-out;
+    font-size: 0.65rem;
+    padding: 6px 10px;
+    border-radius: 4px;
+    width: 180px;
+    outline: none;
 }
 
-.sec-text {
+.manual-sync-bar input:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 10px rgba(0, 255, 0, 0.1);
+}
+
+.manual-sync-bar button {
+    background: var(--primary);
+    color: var(--bg);
+    border: none;
+    padding: 6px 12px;
+    border-radius: 4px;
     font-size: 0.6rem;
-    color: var(--text-muted);
-    opacity: 0.5;
+    font-weight: 800;
+    cursor: pointer;
+    transition: 0.2s;
 }
 
-@keyframes text-pulse {
-
-    0%,
-    100% {
-        opacity: 0.4;
-    }
-
-    50% {
-        opacity: 1;
-    }
+.manual-sync-bar button:hover {
+    filter: brightness(1.1);
+    box-shadow: 0 0 15px var(--primary);
 }
 
 .live-status-toast {

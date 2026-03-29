@@ -1,22 +1,73 @@
-const express = require('express');
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
-const { v4: uuidv4 } = require('uuid');
-const ip = require('ip');
-const Bonjour = require('bonjour-service').Bonjour;
-const morgan = require('morgan');
-const cors = require('cors');
-const mime = require('mime-types');
+import express from 'express';
+import multer from 'multer';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import fs from 'fs';
+import { v4 as uuidv4 } from 'uuid';
+import ip from 'ip';
+import { Bonjour } from 'bonjour-service';
+import morgan from 'morgan';
+import cors from 'cors';
+import mime from 'mime-types';
+import axios from 'axios';
+import dgram from 'dgram'; // Added for UDP Broadcast
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const bonjour = new Bonjour();
 const PORT = process.env.PORT || 3000;
+const DISCOVERY_PORT = 4000; // Specific port for UDP broadcasts
 const SERVICE_TYPE = 'p2pfile-transfer';
 const MY_IP = ip.address();
 const MY_ID = uuidv4().split('-')[0];
 
 console.log(`Starting Node on ${MY_IP}:${PORT} (ID: ${MY_ID})`);
+
+// --- KINETIC_HEARTBEAT (UDP DISCOVERY) ---
+
+const udpSocket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+
+// Broadcast heartbeat every 3 seconds
+setInterval(() => {
+    const message = JSON.stringify({ id: MY_ID, ip: MY_IP, port: PORT });
+    udpSocket.send(message, DISCOVERY_PORT, '255.255.255.255', (err) => {
+        if (err) console.error('Heartbeat blast failed:', err.message);
+    });
+}, 3000);
+
+udpSocket.on('listening', () => {
+    udpSocket.setBroadcast(true);
+    console.log(`Kinetic Heartbeat scanning on port ${DISCOVERY_PORT}`);
+});
+
+let peers = new Map(); // PeerID -> { id, ip, port, lastSeen }
+
+udpSocket.on('message', (msg, rinfo) => {
+    try {
+        const data = JSON.parse(msg.toString());
+        if (data.id === MY_ID) return; // Skip self
+        
+        peers.set(data.id, {
+            ...data,
+            lastSeen: Date.now()
+        });
+    } catch (e) { /* Ignore non-JSON or malformed packets */ }
+});
+
+udpSocket.bind(DISCOVERY_PORT);
+
+// Auto-expire peers after 10 seconds of silence
+setInterval(() => {
+    const now = Date.now();
+    for (const [id, peer] of peers.entries()) {
+        if (now - peer.lastSeen > 10000) {
+            peers.delete(id);
+            console.log(`Node Expired: ${id}`);
+        }
+    }
+}, 5000);
 
 // Storage for hosted files
 const hostedFiles = new Map(); // ID -> { name, path, size, type }
@@ -237,10 +288,35 @@ app.get('/status', (req, res) => {
 });
 
 // 5. Get Network Peers (Discovery)
-let peers = new Map(); // PeerID -> { id, ip, port, files }
+// (peers Map is now defined at the top for UDP/mDNS unification)
 
 app.get('/peers', (req, res) => {
     res.json(Array.from(peers.values()));
+});
+
+// 6. Manual Connect (for Termux/VPN where mDNS fails)
+app.post('/peers/manual', async (req, res) => {
+    const { ip: peerIp, port: peerPort } = req.body;
+    try {
+        console.log(`Manually probing node at ${peerIp}:${peerPort}...`);
+        // Probe status
+        const statusRes = await axios.get(`http://${peerIp}:${peerPort}/status`, { timeout: 3000 });
+        const hostedRes = await axios.get(`http://${peerIp}:${peerPort}/hosted`, { timeout: 3000 });
+        
+        const peerInfo = {
+            id: statusRes.data.id,
+            name: `Manual-${statusRes.data.id}`,
+            ip: peerIp,
+            port: peerPort || 3000,
+            files: hostedRes.data.map(f => ({ id: f.id, name: f.name, size: f.size }))
+        };
+        
+        peers.set(peerInfo.id, peerInfo);
+        res.json({ message: 'Peer added manually', peer: peerInfo });
+    } catch (err) {
+        console.error(`Manual connect failed for ${peerIp}: ${err.message}`);
+        res.status(500).json({ error: 'Could not connect to peer' });
+    }
 });
 
 // --- DISCOVERY LOGIC ---

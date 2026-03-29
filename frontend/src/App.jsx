@@ -138,6 +138,23 @@ function App() {
     } catch (err) { console.error(err); }
   };
 
+  const handleManualSync = async (addr) => {
+    if (!addr) return;
+    const parts = addr.split(':');
+    const ip = parts[0];
+    const port = parts[1] || '3000';
+    setUploadStatus(`SYNCING_MANUALLY_WITH_${ip}:${port}...`);
+    try {
+        await axios.post(`${API_BASE}/peers/manual`, { ip, port });
+        fetchAll();
+        setUploadStatus(`SYNC_SUCCESSFUL_PEER_CONNECTED!`);
+        setTimeout(() => setUploadStatus(''), 3000);
+    } catch (e) {
+        setUploadStatus(`SYNC_FAILED: CHECK_TARGET_STATUS`);
+        setTimeout(() => setUploadStatus(''), 3000);
+    }
+  };
+
   // --- Radar Calculations ---
   const peerPositions = useMemo(() => {
     const radius = 220; 
@@ -243,6 +260,10 @@ function App() {
                         <div className="central-status-display">
                             <span className="scan-text">SCANNING_PROTOCOL_v1.1</span>
                             {uploadStatus && <div className="live-status-toast">{uploadStatus}</div>}
+                            <div className="manual-sync-bar">
+                                <input id="manual-ip-input" placeholder="IP:PORT (e.g. 192.168.1.5:3000)" onKeyDown={(e) => { if(e.key === 'Enter') handleManualSync(e.target.value); }} />
+                                <button onClick={() => handleManualSync(document.getElementById('manual-ip-input').value)}>MANUAL_SYNC</button>
+                            </div>
                         </div>
                         {peerPositions.map((peer) => (
                             <div key={peer.id} className="peer-wrapper" style={{ transform: `translate(${peer.x}px, ${peer.y}px)` }}>
