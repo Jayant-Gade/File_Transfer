@@ -200,22 +200,81 @@ function App() {
   };
 
   const handleDownload = async (file) => {
-    // Ensure IPv6 addresses are wrapped in square brackets
     const formattedIp = file.ownerIp.includes(':') ? `[${file.ownerIp}]` : file.ownerIp;
     const downloadUrl = `http://${formattedIp}:${file.ownerPort}/download/${file.id}`;
-    window.open(downloadUrl, '_blank');
-    
-    // Log receipt to our own server as a 'received' transaction
+    const localId = Math.random().toString(36).substring(2, 10);
+    const useHighPrecision = (file.size < 500 * 1024 * 1024);
+
     try {
-        await axios.post(`${API_BASE}/transfers/log`, {
+        const newTransferRecord = {
+            id: localId,
             name: file.name,
             size: (file.size / 1024 / 1024).toFixed(2) + ' MB',
             peer: file.ownerId,
-            status: 'completed',
-            type: 'received'
+            status: 'transferring',
+            type: 'received',
+            progress: 0,
+            timestamp: new Date().toISOString().replace('T', ' ').split('.')[0]
+        };
+
+        // 1. Log to server and initialize local state
+        await axios.post(`${API_BASE}/transfers/log`, newTransferRecord);
+        setTransfers(prev => [newTransferRecord, ...prev]); 
+        fetchAll(); // Sync other records
+
+        if (!useHighPrecision) {
+            setUploadStatus(`INIT_MASSIVE_RETRIEVAL: ${file.name.substring(0, 15)}...`);
+            window.open(downloadUrl, '_blank');
+            return;
+        }
+
+        setUploadStatus(`RECLAIMING ${file.name.substring(0, 15)}...`);
+
+        const response = await axios({
+            url: downloadUrl,
+            method: 'GET',
+            responseType: 'blob',
+            onDownloadProgress: (progressEvent) => {
+                const total = progressEvent.total || file.size;
+                const loaded = progressEvent.loaded;
+                const percent = Math.min(Math.round((loaded * 100) / total), 99);
+                
+                // Update local state IMMEDIATELY for millisecond UI updates
+                setTransfers(prev => prev.map(t => 
+                    t.id === localId ? { ...t, progress: percent } : t
+                ));
+
+                // Background sync to server ledger every 10% for persistence
+                if (percent % 10 === 0) {
+                    axios.post(`${API_BASE}/transfers/update`, { id: localId, progress: percent });
+                }
+            }
         });
+
+        // Trigger browser save
+        const url = window.URL.createObjectURL(new Blob([response.data]));
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', file.name);
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+
+        await axios.post(`${API_BASE}/transfers/update`, { id: localId, progress: 100, status: 'completed' });
+        setTransfers(prev => prev.map(t => 
+            t.id === localId ? { ...t, progress: 100, status: 'completed' } : t
+        ));
+        setUploadStatus(`SYNC_COMPLETE: ${file.name}`);
+        setTimeout(() => setUploadStatus(''), 3000);
+        
+    } catch (e) { 
+        console.error("Retrieval failed", e);
+        setUploadStatus("PRECISION_FAIL: CASCADE_TO_LEGACY_DOWNLOAD");
+        window.open(downloadUrl, '_blank');
+        await axios.post(`${API_BASE}/transfers/update`, { id: localId, status: 'completed' }); 
         fetchAll();
-    } catch (e) { console.error("Logging failed", e); }
+    }
   };
 
   const handleManualSync = async (addr) => {
@@ -389,6 +448,7 @@ function App() {
                                                         <button className="btn-direct-send" onClick={() => {
                                                             const input = document.createElement('input');
                                                             input.type = 'file';
+                                                            const tempId = Math.random().toString(36).substring(2, 10);
                                                             input.onchange = (e) => sendFileToPeer(peer, e.target.files[0], false);
                                                             input.click();
                                                         }}><FaPaperPlane /> NEW_STREAM</button>

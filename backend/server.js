@@ -123,7 +123,9 @@ function saveHistory() {
 // End of persistence logic
 
 // Middleware
-app.use(cors());
+app.use(cors({
+    exposedHeaders: ['Content-Length', 'Content-Type', 'Content-Disposition']
+}));
 app.use(morgan('dev'));
 app.use(express.json());
 
@@ -299,20 +301,34 @@ app.get('/transfers', (req, res) => {
 
 // 5b. Manually Log a Transfer (for when THIS node downloads from another)
 app.post('/transfers/log', (req, res) => {
-    const { name, size, peer, status, type } = req.body;
+    const { id, name, size, peer, status, type, progress } = req.body;
     const newTransfer = {
-        id: uuidv4().split('-')[0],
+        id: id || uuidv4().split('-')[0],
         name,
         size,
         peer,
-        status: status || 'completed', 
-        progress: status === 'completed' ? 100 : 0,
+        status: status || 'transferring', 
+        progress: progress || 0,
         type: type || 'received',
         timestamp: new Date().toISOString().replace('T', ' ').split('.')[0]
     };
     transfers.push(newTransfer);
     saveHistory();
     res.json(newTransfer);
+});
+
+// Update an existing transfer record (for progress tracking)
+app.post('/transfers/update', (req, res) => {
+    const { id, progress, status } = req.body;
+    const idx = transfers.findIndex(t => t.id === id);
+    if (idx !== -1) {
+        transfers[idx].progress = progress;
+        if (status) transfers[idx].status = status;
+        saveHistory();
+        res.json({ success: true });
+    } else {
+        res.status(404).json({ error: 'Transfer record not found' });
+    }
 });
 
 // 5. List locally hosted files
@@ -348,6 +364,7 @@ app.get('/download/:id', (req, res) => {
     res.writeHead(200, {
         'Content-Type': fileInfo.type || 'application/octet-stream',
         'Content-Length': totalSize,
+        'Access-Control-Expose-Headers': 'Content-Length',
         'Content-Disposition': `attachment; filename="${fileInfo.name}"`
     });
 
